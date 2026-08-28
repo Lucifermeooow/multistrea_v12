@@ -12,6 +12,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+
       - name: Checkout
         uses: actions/checkout@v4
 
@@ -28,7 +29,9 @@ jobs:
           cache: true
 
       - name: Flutter Version
-        run: flutter --version
+        run: |
+          flutter --version
+          flutter doctor -v
 
       - name: Create Android Project
         run: |
@@ -37,29 +40,84 @@ jobs:
             --org com.multistream.real \
             --project-name multistream_real .
 
-      - name: Install Android SDK 37
+      - name: Find Android SDK
+        shell: bash
         run: |
-          yes | sdkmanager --licenses || true
-          sdkmanager "platform-tools" "platforms;android-37"
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
 
-      - name: Set Compile SDK 37
+          if [ -n "$ANDROID_HOME" ]; then
+            SDK="$ANDROID_HOME"
+          else
+            SDK="$ANDROID_SDK_ROOT"
+          fi
+
+          echo "SDK=$SDK"
+
+          find "$SDK" -type f -name sdkmanager 2>/dev/null || true
+
+          SDKMANAGER=$(find "$SDK" -type f -name sdkmanager 2>/dev/null | head -n 1)
+
+          if [ -z "$SDKMANAGER" ]; then
+            echo "ERROR: sdkmanager was not found"
+            exit 1
+          fi
+
+          echo "SDKMANAGER=$SDKMANAGER"
+          echo "SDKMANAGER=$SDKMANAGER" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK=$SDK" >> "$GITHUB_ENV"
+
+      - name: Install Android SDK 37
+        shell: bash
+        run: |
+          echo "Using:"
+          echo "$SDKMANAGER"
+
+          chmod +x "$SDKMANAGER"
+
+          "$SDKMANAGER" --version
+
+          yes | "$SDKMANAGER" --licenses || true
+
+          "$SDKMANAGER" \
+            "platform-tools" \
+            "platforms;android-37" \
+            "build-tools;37.0.0"
+
+      - name: Verify Android SDK 37
+        shell: bash
+        run: |
+          echo "Checking Android SDK 37..."
+
+          test -d "$ANDROID_SDK/platforms/android-37"
+
+          echo "Android SDK 37 FOUND"
+
+          ls -la "$ANDROID_SDK/platforms/android-37"
+
+      - name: Configure Compile SDK
+        shell: bash
         run: |
           python3 - <<'PY'
           from pathlib import Path
 
-          p = Path("android/app/build.gradle.kts")
-          text = p.read_text()
+          path = Path("android/app/build.gradle.kts")
 
+          text = path.read_text()
+
+          # Flutter generated project
           text = text.replace(
               "compileSdk = flutter.compileSdkVersion",
               "compileSdk = 37"
           )
 
+          # Some Flutter templates use a variable
           text = text.replace(
-              "minSdk = flutter.minSdkVersion",
-              "minSdk = 23"
+              "compileSdk = flutter.compileSdkVersion",
+              "compileSdk = 37"
           )
 
+          # Make sure compileSdk exists
           if "compileSdk = 37" not in text:
               text = text.replace(
                   "android {",
@@ -67,21 +125,41 @@ jobs:
                   1
               )
 
-          p.write_text(text)
+          # Minimum Android version
+          text = text.replace(
+              "minSdk = flutter.minSdkVersion",
+              "minSdk = 23"
+          )
 
-          print("Android compileSdk configured to 37")
+          path.write_text(text)
+
+          print("===== android/app/build.gradle.kts =====")
+          print(text)
           PY
 
       - name: Flutter Pub Get
-        run: flutter pub get
-
-      - name: Build APK
-        run: flutter build apk --release
-
-      - name: Check APK
         run: |
+          flutter pub get
+
+      - name: Flutter Analyze
+        run: |
+          flutter analyze
+        continue-on-error: true
+
+      - name: Build Release APK
+        run: |
+          flutter build apk --release
+
+      - name: Verify APK
+        shell: bash
+        run: |
+          echo "===== APK FILE ====="
+
           ls -lh build/app/outputs/flutter-apk/
+
           test -f build/app/outputs/flutter-apk/app-release.apk
+
+          echo "APK BUILD SUCCESSFUL"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
