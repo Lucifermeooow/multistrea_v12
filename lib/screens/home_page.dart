@@ -15,6 +15,7 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage> {
   CameraController? _camera;
+  CameraDescription? _currentCamera;
 
   bool _initialized = false;
   bool _streaming = false;
@@ -23,8 +24,7 @@ class _HomePageState extends State<HomePage> {
 
   String _status = 'جاري تجهيز الكاميرا...';
 
-  final TextEditingController _rtmpController =
-      TextEditingController(
+  final TextEditingController _rtmpController = TextEditingController(
     text:
         'rtmp://userId-3125-1b12964663-stream-proxy.cloud.red5.net:1935/live/multistream-test',
   );
@@ -43,14 +43,19 @@ class _HomePageState extends State<HomePage> {
       final cameras = await availableCameras();
 
       if (cameras.isEmpty) {
+        if (!mounted) return;
+
         setState(() {
           _status = 'لم يتم العثور على كاميرا';
           _loading = false;
         });
+
         return;
       }
 
       final camera = cameras.first;
+
+      _currentCamera = camera;
 
       final controller = CameraController(
         ResolutionPreset.high,
@@ -60,9 +65,11 @@ class _HomePageState extends State<HomePage> {
       await controller.initialize(camera);
 
       await controller.setAudioSettings(128 * 1024);
+
       await controller.setVideoSettings(
         bitrate: 1500 * 1024,
       );
+
       await controller.setFrameRate(30);
 
       if (Platform.isAndroid) {
@@ -110,6 +117,8 @@ class _HomePageState extends State<HomePage> {
     }
 
     try {
+      if (!mounted) return;
+
       setState(() {
         _status = 'جاري بدء البث...';
       });
@@ -152,13 +161,7 @@ class _HomePageState extends State<HomePage> {
     }
 
     try {
-      /*
-       * مهم:
-       * نستخدم stopVideoStreaming بدلاً من stopStreaming
-       * لأن هذا هو الأسلوب المتوافق مع API المستخدم في
-       * أمثلة rtmp_streaming الحالية.
-       */
-      await _camera!.stopVideoStreaming();
+      await _camera!.stopStreaming();
 
       await WakelockPlus.disable();
 
@@ -189,8 +192,34 @@ class _HomePageState extends State<HomePage> {
       return;
     }
 
+    if (_streaming) {
+      _showMessage('أوقف البث قبل تغيير الكاميرا');
+      return;
+    }
+
     try {
-      await _camera!.switchCamera();
+      final cameras = await availableCameras();
+
+      if (cameras.length < 2) {
+        _showMessage('لا توجد كاميرا أخرى متاحة');
+        return;
+      }
+
+      final currentIndex = _currentCamera == null
+          ? 0
+          : cameras.indexWhere(
+              (camera) => camera.name == _currentCamera!.name,
+            );
+
+      final nextIndex = currentIndex == -1
+          ? 0
+          : (currentIndex + 1) % cameras.length;
+
+      final nextCamera = cameras[nextIndex];
+
+      await _camera!.switchCamera(nextCamera.name);
+
+      _currentCamera = nextCamera;
 
       if (!mounted) return;
 
@@ -346,7 +375,9 @@ class _HomePageState extends State<HomePage> {
                             : Colors.grey,
                       ),
                     ),
+
                     const SizedBox(width: 10),
+
                     Expanded(
                       child: Text(
                         _status,
@@ -369,12 +400,18 @@ class _HomePageState extends State<HomePage> {
                   Expanded(
                     child: OutlinedButton.icon(
                       onPressed:
-                          _initialized ? _switchCamera : null,
-                      icon: const Icon(Icons.flip_camera_android),
+                          _initialized && !_streaming
+                              ? _switchCamera
+                              : null,
+                      icon: const Icon(
+                        Icons.flip_camera_android,
+                      ),
                       label: const Text('تغيير الكاميرا'),
                     ),
                   ),
+
                   const SizedBox(width: 10),
+
                   Expanded(
                     child: OutlinedButton.icon(
                       onPressed:
@@ -385,7 +422,9 @@ class _HomePageState extends State<HomePage> {
                             : Icons.mic,
                       ),
                       label: Text(
-                        _muted ? 'تشغيل الصوت' : 'كتم الصوت',
+                        _muted
+                            ? 'تشغيل الصوت'
+                            : 'كتم الصوت',
                       ),
                     ),
                   ),
