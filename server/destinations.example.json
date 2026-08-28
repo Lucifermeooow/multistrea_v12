@@ -1,0 +1,20 @@
+[
+  {
+    "name": "YouTube",
+    "enabled": true,
+    "url": "rtmps://YOUR_YOUTUBE_INGEST_HOST/app",
+    "streamKey": "YOUR_YOUTUBE_STREAM_KEY"
+  },
+  {
+    "name": "Facebook",
+    "enabled": true,
+    "url": "rtmps://YOUR_FACEBOOK_INGEST_HOST/live",
+    "streamKey": "YOUR_FACEBOOK_STREAM_KEY"
+  },
+  {
+    "name": "TikTok / Custom RTMP",
+    "enabled": true,
+    "url": "rtmp://YOUR_TIKTOK_INGEST_HOST/live",
+    "streamKey": "YOUR_TIKTOK_STREAM_KEY"
+  }
+]

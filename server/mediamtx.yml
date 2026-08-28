@@ -1,0 +1,8 @@
+logLevel: info
+
+rtmp: yes
+rtmpAddress: :1935
+
+# The router reads this path and fans it out with FFmpeg.
+paths:
+  all_others:
