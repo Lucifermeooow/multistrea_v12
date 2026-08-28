@@ -1,0 +1,131 @@
+name: Build MultiStream APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    name: Build Android APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Check Flutter
+        run: |
+          flutter --version
+          flutter doctor -v
+
+      - name: Generate Android project
+        run: |
+          flutter create --platforms=android .
+
+      - name: Configure Android
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          manifest = Path("android/app/src/main/AndroidManifest.xml")
+
+          s = manifest.read_text()
+
+          marker = '<manifest xmlns:android="http://schemas.android.com/apk/res/android">'
+
+          permissions = """
+              <uses-permission android:name="android.permission.INTERNET" />
+              <uses-permission android:name="android.permission.CAMERA" />
+              <uses-permission android:name="android.permission.RECORD_AUDIO" />
+          """
+
+          if "android.permission.CAMERA" not in s:
+              s = s.replace(marker, marker + permissions)
+
+          manifest.write_text(s)
+
+          gradle = Path("android/app/build.gradle.kts")
+
+          if gradle.exists():
+              s = gradle.read_text()
+
+              s = s.replace(
+                  "minSdk = flutter.minSdkVersion",
+                  "minSdk = 23"
+              )
+
+              s = s.replace(
+                  "compileSdk = flutter.compileSdkVersion",
+                  "compileSdk = 37"
+              )
+
+              if "compileSdk = 37" not in s:
+                  s = s.replace(
+                      "android {",
+                      "android {\n    compileSdk = 37",
+                      1
+                  )
+
+              gradle.write_text(s)
+          PY
+
+      - name: Install Android SDK
+        shell: bash
+        run: |
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
+
+          yes | sdkmanager --licenses || true
+
+          sdkmanager \
+            "platform-tools" \
+            "platforms;android-36" \
+            "build-tools;36.0.0" || true
+
+      - name: Fix compile SDK if Android 37 unavailable
+        shell: bash
+        run: |
+          if [ -d "$ANDROID_HOME/platforms/android-37" ]; then
+            echo "Android SDK 37 found."
+            sed -i 's/compileSdk = 36/compileSdk = 37/g' android/app/build.gradle.kts || true
+          else
+            echo "Android SDK 37 is not available on this runner."
+            echo "Using Android SDK 36."
+            sed -i 's/compileSdk = 37/compileSdk = 36/g' android/app/build.gradle.kts || true
+          fi
+
+      - name: Get Flutter packages
+        run: flutter pub get
+
+      - name: Analyze project
+        run: flutter analyze
+        continue-on-error: true
+
+      - name: Build Release APK
+        run: flutter build apk --release
+
+      - name: Show APK
+        run: |
+          ls -lah build/app/outputs/flutter-apk/
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: multistrea-v12-apk
+          path: build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error
