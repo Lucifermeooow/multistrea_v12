@@ -1,9 +1,9 @@
-import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:rtmp_streaming/rtmp_streaming.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
 class HomePage extends StatefulWidget {
@@ -14,60 +14,106 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
-  CameraController? _camera;
-  CameraDescription? _currentCamera;
-
-  bool _initialized = false;
-  bool _streaming = false;
-  bool _loading = true;
-  bool _muted = false;
-
-  String _status = 'جاري تجهيز الكاميرا...';
-
-  final TextEditingController _rtmpController = TextEditingController(
+  final TextEditingController _publishUrl = TextEditingController(
     text:
         'rtmp://userId-3125-1b12964663-stream-proxy.cloud.red5.net:1935/live/multistream-test',
   );
 
+  final TextEditingController _backendUrl = TextEditingController(
+    text: 'https://YOUR-OAUTH-SERVER.example.com',
+  );
+
+  CameraController? _camera;
+
+  bool _ready = false;
+  bool _live = false;
+  bool _busy = false;
+
+  String _status = 'جاهز للبث';
+
+  final Map<String, bool> destinations = {
+    'YouTube': true,
+    'Facebook': true,
+    'TikTok': true,
+  };
+
   @override
-  void initState() {
-    super.initState();
-    _initializeCamera();
+  void dispose() {
+    _publishUrl.dispose();
+    _backendUrl.dispose();
+    _camera?.dispose();
+    WakelockPlus.disable();
+    super.dispose();
   }
 
-  Future<void> _initializeCamera() async {
+  Future<void> _connect(String provider) async {
+    final base = _backendUrl.text
+        .trim()
+        .replaceAll(RegExp(r'/+$'), '');
+
+    if (base.isEmpty ||
+        base.contains('YOUR-OAUTH-SERVER.example.com')) {
+      _showMessage('ضع رابط OAuth Backend أولاً.');
+      return;
+    }
+
+    final uri = Uri.parse('$base/auth/$provider/start');
+
     try {
-      await Permission.camera.request();
-      await Permission.microphone.request();
+      final opened = await launchUrl(
+        uri,
+        mode: LaunchMode.externalApplication,
+      );
+
+      if (!opened) {
+        _showMessage('تعذر فتح صفحة تسجيل الدخول.');
+      }
+    } catch (e) {
+      _showMessage('خطأ في فتح تسجيل الدخول: $e');
+    }
+  }
+
+  Future<void> _prepare() async {
+    if (_busy) return;
+
+    setState(() {
+      _busy = true;
+      _status = 'جاري تشغيل الكاميرا...';
+    });
+
+    try {
+      final cameraPermission =
+          await Permission.camera.request();
+
+      final microphonePermission =
+          await Permission.microphone.request();
+
+      if (!cameraPermission.isGranted ||
+          !microphonePermission.isGranted) {
+        throw Exception(
+          'يجب السماح للكاميرا والميكروفون.',
+        );
+      }
 
       final cameras = await availableCameras();
 
       if (cameras.isEmpty) {
-        if (!mounted) return;
-
-        setState(() {
-          _status = 'لم يتم العثور على كاميرا';
-          _loading = false;
-        });
-
-        return;
+        throw Exception('لم يتم العثور على كاميرا.');
       }
-
-      final camera = cameras.first;
-
-      _currentCamera = camera;
 
       final controller = CameraController(
         ResolutionPreset.high,
         enableAudio: true,
       );
 
-      await controller.initialize(camera);
+      await controller.initialize(cameras.first);
 
-      await controller.setAudioSettings(128 * 1024);
+      await controller.setAudioSettings(
+        128 * 1024,
+      );
 
       await controller.setVideoSettings(
-        bitrate: 1500 * 1024,
+        bitrate: 2500 * 1024,
       );
 
       await controller.setFrameRate(30);
@@ -77,57 +123,62 @@ class _HomePageState extends State<HomePage> {
         await controller.setRtmpShouldSendPings(true);
       }
 
-      _camera = controller;
+      if (Platform.isIOS) {
+        await controller.prepareForVideoStreaming();
+      }
 
-      if (!mounted) return;
+      if (!mounted) {
+        await controller.dispose();
+        return;
+      }
+
+      await _camera?.dispose();
 
       setState(() {
-        _initialized = true;
-        _loading = false;
-        _status = 'جاهز للبث';
+        _camera = controller;
+        _ready = true;
+        _status = 'الكاميرا جاهزة — اضغط GO LIVE';
       });
     } catch (e) {
-      if (!mounted) return;
-
-      setState(() {
-        _loading = false;
-        _status = 'خطأ في تشغيل الكاميرا';
-      });
-
-      _showMessage('خطأ: $e');
+      if (mounted) {
+        setState(() {
+          _status = 'خطأ: $e';
+        });
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _busy = false;
+        });
+      }
     }
   }
 
-  Future<void> _startStreaming() async {
-    if (_camera == null || !_initialized) {
-      _showMessage('الكاميرا غير جاهزة');
+  Future<void> _goLive() async {
+    if (_busy || _live) return;
+
+    final url = _publishUrl.text.trim();
+
+    if (!url.startsWith('rtmp://') &&
+        !url.startsWith('rtmps://')) {
+      _showMessage('ضع RTMP URL صحيحًا.');
       return;
     }
 
-    if (_streaming) {
-      _showMessage('البث يعمل بالفعل');
-      return;
+    if (!_ready || _camera == null) {
+      await _prepare();
+
+      if (!_ready || _camera == null) {
+        return;
+      }
     }
 
-    final url = _rtmpController.text.trim();
-
-    if (url.isEmpty) {
-      _showMessage('اكتب رابط RTMP');
-      return;
-    }
+    setState(() {
+      _busy = true;
+      _status = 'جاري بدء البث...';
+    });
 
     try {
-      if (!mounted) return;
-
-      setState(() {
-        _status = 'جاري بدء البث...';
-      });
-
-      if (Platform.isAndroid) {
-        await _camera!.setForceBt709Color(true);
-        await _camera!.setRtmpShouldSendPings(true);
-      }
-
       await _camera!.startVideoStreaming(
         url,
         protocol: StreamingProtocol.rtmp,
@@ -138,116 +189,64 @@ class _HomePageState extends State<HomePage> {
       if (!mounted) return;
 
       setState(() {
-        _streaming = true;
-        _status = 'LIVE — البث يعمل';
+        _live = true;
+        _status =
+            '🔴 LIVE — البث متصل بالسيرفر';
       });
-
-      _showMessage('تم بدء البث');
     } catch (e) {
-      if (!mounted) return;
-
-      setState(() {
-        _streaming = false;
-        _status = 'فشل بدء البث';
-      });
-
-      _showMessage('فشل البث: $e');
-    }
-  }
-
-  Future<void> _stopStreaming() async {
-    if (_camera == null) {
-      return;
-    }
-
-    try {
-      await _camera!.stopStreaming();
-
-      await WakelockPlus.disable();
-
-      if (!mounted) return;
-
-      setState(() {
-        _streaming = false;
-        _status = 'تم إيقاف البث';
-      });
-
-      _showMessage('تم إيقاف البث');
-    } catch (e) {
-      await WakelockPlus.disable();
-
-      if (!mounted) return;
-
-      setState(() {
-        _streaming = false;
-        _status = 'تم إيقاف البث';
-      });
-
-      _showMessage('تم إيقاف البث');
-    }
-  }
-
-  Future<void> _switchCamera() async {
-    if (_camera == null || !_initialized) {
-      return;
-    }
-
-    if (_streaming) {
-      _showMessage('أوقف البث قبل تغيير الكاميرا');
-      return;
-    }
-
-    try {
-      final cameras = await availableCameras();
-
-      if (cameras.length < 2) {
-        _showMessage('لا توجد كاميرا أخرى متاحة');
-        return;
+      if (mounted) {
+        setState(() {
+          _live = false;
+          _status = 'فشل بدء البث: $e';
+        });
       }
-
-      final currentIndex = _currentCamera == null
-          ? 0
-          : cameras.indexWhere(
-              (camera) => camera.name == _currentCamera!.name,
-            );
-
-      final nextIndex = currentIndex == -1
-          ? 0
-          : (currentIndex + 1) % cameras.length;
-
-      final nextCamera = cameras[nextIndex];
-
-      await _camera!.switchCamera(nextCamera.name);
-
-      _currentCamera = nextCamera;
-
-      if (!mounted) return;
-
-      _showMessage('تم تغيير الكاميرا');
-    } catch (e) {
-      _showMessage('تعذر تغيير الكاميرا: $e');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _busy = false;
+        });
+      }
     }
   }
 
-  Future<void> _toggleMute() async {
-    if (_camera == null || !_initialized) {
-      return;
-    }
+  Future<void> _stop() async {
+    if (_busy) return;
+
+    setState(() {
+      _busy = true;
+      _status = 'جاري إيقاف البث...';
+    });
 
     try {
-      _muted = !_muted;
+      /*
+       * الإصدار 2.0.1 من rtmp_streaming
+       * يستخدم stopVideoStreaming().
+       */
+      await _camera?.stopVideoStreaming();
 
-      await _camera!.setHasAudio(!_muted);
+      await WakelockPlus.disable();
 
       if (!mounted) return;
 
-      setState(() {});
-
-      _showMessage(
-        _muted ? 'تم كتم الميكروفون' : 'تم تشغيل الميكروفون',
-      );
+      setState(() {
+        _live = false;
+        _status = 'تم إيقاف البث';
+      });
     } catch (e) {
-      _showMessage('تعذر تغيير حالة الميكروفون: $e');
+      await WakelockPlus.disable();
+
+      if (mounted) {
+        setState(() {
+          _live = false;
+          _status = 'تم إيقاف البث';
+        });
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _busy = false;
+        });
+      }
     }
   }
 
@@ -264,265 +263,231 @@ class _HomePageState extends State<HomePage> {
       );
   }
 
-  @override
-  void dispose() {
-    _rtmpController.dispose();
-    _camera?.dispose();
-    WakelockPlus.disable();
-    super.dispose();
+  Widget _destination(String name) {
+    final enabled = destinations[name] ?? false;
+
+    IconData icon;
+
+    if (name == 'YouTube') {
+      icon = Icons.play_circle_fill;
+    } else if (name == 'Facebook') {
+      icon = Icons.facebook;
+    } else {
+      icon = Icons.live_tv;
+    }
+
+    return SwitchListTile(
+      value: enabled,
+      onChanged: _live
+          ? null
+          : (value) {
+              setState(() {
+                destinations[name] = value;
+              });
+            },
+      secondary: Icon(icon),
+      title: Text(name),
+      contentPadding: EdgeInsets.zero,
+    );
   }
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-
     return Scaffold(
-      backgroundColor: const Color(0xFF080A10),
       appBar: AppBar(
-        backgroundColor: const Color(0xFF10121A),
-        elevation: 0,
+        title: const Text('MultiStream Real'),
         centerTitle: true,
-        title: const Text(
-          'MultiStream Real',
-          style: TextStyle(
-            fontWeight: FontWeight.bold,
-          ),
-        ),
       ),
-      body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(18),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          Container(
+            height: 240,
+            clipBehavior: Clip.antiAlias,
+            decoration: BoxDecoration(
+              color: Colors.black,
+              borderRadius: BorderRadius.circular(18),
+            ),
+            child: _ready && _camera != null
+                ? CameraPreview(_camera!)
+                : const Center(
+                    child: Icon(
+                      Icons.videocam_outlined,
+                      size: 70,
+                      color: Colors.white38,
+                    ),
+                  ),
+          ),
+
+          const SizedBox(height: 14),
+
+          Text(
+            _status,
+            style: TextStyle(
+              color: _live
+                  ? Colors.redAccent
+                  : Colors.white,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+
+          const SizedBox(height: 16),
+
+          TextField(
+            controller: _publishUrl,
+            enabled: !_live,
+            maxLines: 2,
+            decoration: const InputDecoration(
+              labelText: 'Server RTMP Ingest URL',
+              border: OutlineInputBorder(),
+              prefixIcon: Icon(Icons.link),
+            ),
+          ),
+
+          const SizedBox(height: 12),
+
+          const Text(
+            'البث يخرج من الهاتف إلى السيرفر في نسخة واحدة.',
+            style: TextStyle(
+              color: Colors.white60,
+            ),
+          ),
+
+          const SizedBox(height: 16),
+
+          TextField(
+            controller: _backendUrl,
+            enabled: !_live,
+            decoration: const InputDecoration(
+              labelText: 'OAuth Backend URL',
+              border: OutlineInputBorder(),
+              prefixIcon: Icon(Icons.cloud),
+            ),
+          ),
+
+          const SizedBox(height: 12),
+
+          const Text(
+            'ربط الحسابات',
+            style: TextStyle(
+              fontSize: 17,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+
+          const SizedBox(height: 8),
+
+          Row(
             children: [
-              _buildPreview(),
-
-              const SizedBox(height: 18),
-
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF11141D),
-                  borderRadius: BorderRadius.circular(18),
-                  border: Border.all(
-                    color: Colors.white12,
-                  ),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'Server RTMP Ingest URL',
-                      style: TextStyle(
-                        color: Colors.white70,
-                        fontSize: 14,
-                      ),
-                    ),
-
-                    const SizedBox(height: 8),
-
-                    TextField(
-                      controller: _rtmpController,
-                      enabled: !_streaming,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 13,
-                      ),
-                      maxLines: 2,
-                      decoration: InputDecoration(
-                        prefixIcon: const Icon(
-                          Icons.link,
-                          color: Colors.white54,
-                        ),
-                        filled: true,
-                        fillColor: const Color(0xFF080A10),
-                        hintText: 'rtmp://server/live/key',
-                        hintStyle: const TextStyle(
-                          color: Colors.white30,
-                        ),
-                        border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(12),
-                          borderSide: BorderSide.none,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-
-              const SizedBox(height: 16),
-
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 14,
-                ),
-                decoration: BoxDecoration(
-                  color: _streaming
-                      ? const Color(0xFF321016)
-                      : const Color(0xFF11141D),
-                  borderRadius: BorderRadius.circular(16),
-                ),
-                child: Row(
-                  children: [
-                    Container(
-                      width: 12,
-                      height: 12,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: _streaming
-                            ? Colors.red
-                            : Colors.grey,
-                      ),
-                    ),
-
-                    const SizedBox(width: 10),
-
-                    Expanded(
-                      child: Text(
-                        _status,
-                        style: TextStyle(
-                          color: _streaming
-                              ? Colors.redAccent
-                              : Colors.white70,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-
-              const SizedBox(height: 18),
-
-              Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      onPressed:
-                          _initialized && !_streaming
-                              ? _switchCamera
-                              : null,
-                      icon: const Icon(
-                        Icons.flip_camera_android,
-                      ),
-                      label: const Text('تغيير الكاميرا'),
-                    ),
-                  ),
-
-                  const SizedBox(width: 10),
-
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      onPressed:
-                          _initialized ? _toggleMute : null,
-                      icon: Icon(
-                        _muted
-                            ? Icons.mic_off
-                            : Icons.mic,
-                      ),
-                      label: Text(
-                        _muted
-                            ? 'تشغيل الصوت'
-                            : 'كتم الصوت',
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-
-              const SizedBox(height: 16),
-
-              SizedBox(
-                height: 56,
-                child: ElevatedButton.icon(
-                  onPressed: _loading
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: _live
                       ? null
-                      : (_streaming
-                          ? _stopStreaming
-                          : _startStreaming),
-                  icon: Icon(
-                    _streaming
-                        ? Icons.stop
-                        : Icons.play_arrow,
-                  ),
-                  label: Text(
-                    _streaming
-                        ? 'إيقاف البث'
-                        : 'بدء البث',
-                    style: const TextStyle(
-                      fontSize: 17,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: _streaming
-                        ? Colors.redAccent
-                        : theme.colorScheme.primary,
-                    foregroundColor: Colors.white,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(16),
-                    ),
+                      : () => _connect('youtube'),
+                  child: const Text(
+                    'Connect YouTube',
                   ),
                 ),
               ),
 
-              const SizedBox(height: 20),
+              const SizedBox(width: 8),
 
-              const Text(
-                'YouTube / Facebook / TikTok',
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  color: Colors.white54,
-                  fontSize: 14,
-                ),
-              ),
-
-              const SizedBox(height: 6),
-
-              const Text(
-                'النسخة الحالية ترسل الفيديو إلى عنوان RTMP الموجود بالأعلى. '
-                'الـOAuth وربط المنصات يحتاج Backend مستقل.',
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  color: Colors.white38,
-                  fontSize: 12,
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: _live
+                      ? null
+                      : () => _connect('facebook'),
+                  child: const Text(
+                    'Connect Facebook',
+                  ),
                 ),
               ),
             ],
           ),
-        ),
-      ),
-    );
-  }
 
-  Widget _buildPreview() {
-    return Container(
-      height: 360,
-      clipBehavior: Clip.antiAlias,
-      decoration: BoxDecoration(
-        color: Colors.black,
-        borderRadius: BorderRadius.circular(24),
-        border: Border.all(
-          color: Colors.white12,
-        ),
-      ),
-      child: _loading
-          ? const Center(
-              child: CircularProgressIndicator(),
-            )
-          : (!_initialized || _camera == null)
-              ? Center(
-                  child: Text(
-                    _status,
-                    style: const TextStyle(
-                      color: Colors.white54,
-                    ),
+          const SizedBox(height: 8),
+
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton(
+              onPressed: _live
+                  ? null
+                  : () => _connect('tiktok'),
+              child: const Text(
+                'Connect TikTok',
+              ),
+            ),
+          ),
+
+          const SizedBox(height: 14),
+
+          const Text(
+            'المنصات',
+            style: TextStyle(
+              fontSize: 17,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+
+          _destination('YouTube'),
+          _destination('Facebook'),
+          _destination('TikTok'),
+
+          const SizedBox(height: 14),
+
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed:
+                      (_busy || _live)
+                          ? null
+                          : _prepare,
+                  icon: const Icon(
+                    Icons.camera_alt,
                   ),
-                )
-              : CameraPreview(
-                  _camera!,
+                  label: const Text(
+                    'اختبار الكاميرا',
+                  ),
                 ),
+              ),
+
+              const SizedBox(width: 10),
+
+              Expanded(
+                child: FilledButton.icon(
+                  onPressed: _busy
+                      ? null
+                      : (_live
+                          ? _stop
+                          : _goLive),
+                  icon: Icon(
+                    _live
+                        ? Icons.stop
+                        : Icons.live_tv,
+                  ),
+                  label: Text(
+                    _live
+                        ? 'إيقاف'
+                        : 'GO LIVE',
+                  ),
+                ),
+              ),
+            ],
+          ),
+
+          const SizedBox(height: 18),
+
+          const Text(
+            'YouTube + Facebook + TikTok',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              color: Colors.white54,
+              fontSize: 13,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
