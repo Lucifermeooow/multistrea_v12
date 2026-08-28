@@ -1,131 +1,204 @@
-name: Build MultiStream APK
+Run flutter build apk --release
+Upgrading build.gradle.kts
+Running Gradle task 'assembleRelease'...                        
+Warning: The plugin rtmp_streaming requires Android SDK version 37 or higher.
+For more information about build configuration, see https://flutter.dev/to/review-gradle-config.
+Font asset "MaterialIcons-Regular.otf" was tree-shaken, reducing it from 1645184 to 2156 bytes (99.9% reduction). Tree-shaking can be disabled by providing the --no-tree-shake-icons flag when building your app.
+Your project is configured to compile against Android SDK 36, but the following plugin(s) require to be compiled against a higher Android SDK version:
+- rtmp_streaming compiles against Android SDK 37
+Fix this issue by compiling against the highest Android SDK version (they are backward compatible).
+Add the following to /home/runner/work/multistrea_v12/multistrea_v12/android/app/build.gradle.kts:
 
-on:
-  workflow_dispatch:
-  push:
-    branches:
-      - main
+    android {
+        compileSdk = 37
+        ...
+    }
 
-jobs:
-  build:
-    name: Build Android APK
-    runs-on: ubuntu-latest
+FAILURE: Build failed with an exception.
 
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+* What went wrong:
+Execution failed for task ':app:checkReleaseAarMetadata'.
+> A failure occurred while executing com.android.build.gradle.internal.tasks.CheckAarMetadataWorkAction
+   > 9 issues were found when checking AAR metadata:
 
-      - name: Setup Java
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '17'
+       1.  Dependency ':rtmp_streaming' requires libraries and applications that
+           depend on it to compile against version 37 or later of the
+           Android APIs.
 
-      - name: Setup Flutter
-        uses: subosito/flutter-action@v2
-        with:
-          channel: stable
-          cache: true
+           :app is currently compiled against android-36.
 
-      - name: Check Flutter
-        run: |
-          flutter --version
-          flutter doctor -v
+           Also, the maximum recommended compile SDK version for Android Gradle
+           plugin 9.1.0 is 36.
 
-      - name: Generate Android project
-        run: |
-          flutter create --platforms=android .
+           Recommended action: Update this project's version of the Android Gradle
+           plugin to one that supports 37, then update this project to use
+           compileSdk of at least 37.
 
-      - name: Configure Android
-        shell: bash
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
+           Note that updating a library or application's compileSdk (which
+           allows newer APIs to be used) can be done separately from updating
+           targetSdk (which opts the app in to new runtime behavior) and
+           minSdk (which determines which devices the app can be installed
+           on).
 
-          manifest = Path("android/app/src/main/AndroidManifest.xml")
+       2.  Dependency 'com.github.pedroSG94.RootEncoder:library:2.8.0' requires libraries and applications that
+           depend on it to compile against version 37 or later of the
+           Android APIs.
 
-          s = manifest.read_text()
+           :app is currently compiled against android-36.
 
-          marker = '<manifest xmlns:android="http://schemas.android.com/apk/res/android">'
+           Also, the maximum recommended compile SDK version for Android Gradle
+           plugin 9.1.0 is 36.
 
-          permissions = """
-              <uses-permission android:name="android.permission.INTERNET" />
-              <uses-permission android:name="android.permission.CAMERA" />
-              <uses-permission android:name="android.permission.RECORD_AUDIO" />
-          """
+           Recommended action: Update this project's version of the Android Gradle
+           plugin to one that supports 37, then update this project to use
+           compileSdk of at least 37.
 
-          if "android.permission.CAMERA" not in s:
-              s = s.replace(marker, marker + permissions)
+           Note that updating a library or application's compileSdk (which
+           allows newer APIs to be used) can be done separately from updating
+           targetSdk (which opts the app in to new runtime behavior) and
+           minSdk (which determines which devices the app can be installed
+           on).
 
-          manifest.write_text(s)
+       3.  Dependency 'com.github.pedroSG94.RootEncoder:encoder:2.8.0' requires libraries and applications that
+           depend on it to compile against version 37 or later of the
+           Android APIs.
 
-          gradle = Path("android/app/build.gradle.kts")
+           :app is currently compiled against android-36.
 
-          if gradle.exists():
-              s = gradle.read_text()
+           Also, the maximum recommended compile SDK version for Android Gradle
+           plugin 9.1.0 is 36.
 
-              s = s.replace(
-                  "minSdk = flutter.minSdkVersion",
-                  "minSdk = 23"
-              )
+           Recommended action: Update this project's version of the Android Gradle
+           plugin to one that supports 37, then update this project to use
+           compileSdk of at least 37.
 
-              s = s.replace(
-                  "compileSdk = flutter.compileSdkVersion",
-                  "compileSdk = 37"
-              )
+           Note that updating a library or application's compileSdk (which
+           allows newer APIs to be used) can be done separately from updating
+           targetSdk (which opts the app in to new runtime behavior) and
+           minSdk (which determines which devices the app can be installed
+           on).
 
-              if "compileSdk = 37" not in s:
-                  s = s.replace(
-                      "android {",
-                      "android {\n    compileSdk = 37",
-                      1
-                  )
+       4.  Dependency 'com.github.pedroSG94.RootEncoder:rtmp:2.8.0' requires libraries and applications that
+           depend on it to compile against version 37 or later of the
+           Android APIs.
 
-              gradle.write_text(s)
-          PY
+           :app is currently compiled against android-36.
 
-      - name: Install Android SDK
-        shell: bash
-        run: |
-          echo "ANDROID_HOME=$ANDROID_HOME"
-          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
+           Also, the maximum recommended compile SDK version for Android Gradle
+           plugin 9.1.0 is 36.
 
-          yes | sdkmanager --licenses || true
+           Recommended action: Update this project's version of the Android Gradle
+           plugin to one that supports 37, then update this project to use
+           compileSdk of at least 37.
 
-          sdkmanager \
-            "platform-tools" \
-            "platforms;android-36" \
-            "build-tools;36.0.0" || true
+           Note that updating a library or application's compileSdk (which
+           allows newer APIs to be used) can be done separately from updating
+           targetSdk (which opts the app in to new runtime behavior) and
+           minSdk (which determines which devices the app can be installed
+           on).
 
-      - name: Fix compile SDK if Android 37 unavailable
-        shell: bash
-        run: |
-          if [ -d "$ANDROID_HOME/platforms/android-37" ]; then
-            echo "Android SDK 37 found."
-            sed -i 's/compileSdk = 36/compileSdk = 37/g' android/app/build.gradle.kts || true
-          else
-            echo "Android SDK 37 is not available on this runner."
-            echo "Using Android SDK 36."
-            sed -i 's/compileSdk = 37/compileSdk = 36/g' android/app/build.gradle.kts || true
-          fi
+       5.  Dependency 'com.github.pedroSG94.RootEncoder:whip:2.8.0' requires libraries and applications that
+           depend on it to compile against version 37 or later of the
+           Android APIs.
 
-      - name: Get Flutter packages
-        run: flutter pub get
+           :app is currently compiled against android-36.
 
-      - name: Analyze project
-        run: flutter analyze
-        continue-on-error: true
+           Also, the maximum recommended compile SDK version for Android Gradle
+           plugin 9.1.0 is 36.
 
-      - name: Build Release APK
-        run: flutter build apk --release
+           Recommended action: Update this project's version of the Android Gradle
+           plugin to one that supports 37, then update this project to use
+           compileSdk of at least 37.
 
-      - name: Show APK
-        run: |
-          ls -lah build/app/outputs/flutter-apk/
+           Note that updating a library or application's compileSdk (which
+           allows newer APIs to be used) can be done separately from updating
+           targetSdk (which opts the app in to new runtime behavior) and
+           minSdk (which determines which devices the app can be installed
+           on).
 
-      - name: Upload APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: multistrea-v12-apk
-          path: build/app/outputs/flutter-apk/app-release.apk
-          if-no-files-found: error
+       6.  Dependency 'com.github.pedroSG94.RootEncoder:rtsp:2.8.0' requires libraries and applications that
+           depend on it to compile against version 37 or later of the
+           Android APIs.
+
+           :app is currently compiled against android-36.
+
+           Also, the maximum recommended compile SDK version for Android Gradle
+           plugin 9.1.0 is 36.
+
+           Recommended action: Update this project's version of the Android Gradle
+           plugin to one that supports 37, then update this project to use
+           compileSdk of at least 37.
+
+           Note that updating a library or application's compileSdk (which
+           allows newer APIs to be used) can be done separately from updating
+           targetSdk (which opts the app in to new runtime behavior) and
+           minSdk (which determines which devices the app can be installed
+           on).
+
+       7.  Dependency 'com.github.pedroSG94.RootEncoder:udp:2.8.0' requires libraries and applications that
+           depend on it to compile against version 37 or later of the
+           Android APIs.
+
+           :app is currently compiled against android-36.
+
+           Also, the maximum recommended compile SDK version for Android Gradle
+           plugin 9.1.0 is 36.
+
+           Recommended action: Update this project's version of the Android Gradle
+           plugin to one that supports 37, then update this project to use
+           compileSdk of at least 37.
+
+           Note that updating a library or application's compileSdk (which
+           allows newer APIs to be used) can be done separately from updating
+           targetSdk (which opts the app in to new runtime behavior) and
+           minSdk (which determines which devices the app can be installed
+           on).
+
+       8.  Dependency 'com.github.pedroSG94.RootEncoder:srt:2.8.0' requires libraries and applications that
+           depend on it to compile against version 37 or later of the
+           Android APIs.
+
+           :app is currently compiled against android-36.
+
+           Also, the maximum recommended compile SDK version for Android Gradle
+           plugin 9.1.0 is 36.
+
+           Recommended action: Update this project's version of the Android Gradle
+           plugin to one that supports 37, then update this project to use
+           compileSdk of at least 37.
+
+           Note that updating a library or application's compileSdk (which
+           allows newer APIs to be used) can be done separately from updating
+           targetSdk (which opts the app in to new runtime behavior) and
+           minSdk (which determines which devices the app can be installed
+           on).
+
+       9.  Dependency 'com.github.pedroSG94.RootEncoder:common:2.8.0' requires libraries and applications that
+           depend on it to compile against version 37 or later of the
+           Android APIs.
+
+           :app is currently compiled against android-36.
+
+           Also, the maximum recommended compile SDK version for Android Gradle
+           plugin 9.1.0 is 36.
+
+           Recommended action: Update this project's version of the Android Gradle
+           plugin to one that supports 37, then update this project to use
+           compileSdk of at least 37.
+
+           Note that updating a library or application's compileSdk (which
+           allows newer APIs to be used) can be done separately from updating
+           targetSdk (which opts the app in to new runtime behavior) and
+           minSdk (which determines which devices the app can be installed
+           on).
+
+* Try:
+> Run with --stacktrace option to get the stack trace.
+> Run with --info or --debug option to get more log output.
+> Run with --scan to get full insights from a Build Scan (powered by Develocity).
+> Get more help at https://help.gradle.org.
+
+BUILD FAILED in 3m 12s
+Running Gradle task 'assembleRelease'...                          192.7s
+Gradle task assembleRelease failed with exit code 1
+Error: Process completed with exit code 1.
